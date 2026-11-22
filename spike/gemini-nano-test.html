@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VitaCheck — Gemini Nano spike test</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  .status { font-size: 1.25rem; font-weight: 700; padding: .75rem 1rem; border-radius: .5rem; margin: 1rem 0; }
+  .ok { background: #dcfce7; color: #14532d; }
+  .warn { background: #fef9c3; color: #713f12; }
+  .bad { background: #fee2e2; color: #7f1d1d; }
+  button { font-size: 1rem; padding: .6rem 1.2rem; cursor: pointer; }
+  pre { background: #f1f5f9; padding: 1rem; border-radius: .5rem; white-space: pre-wrap; }
+  code { background: #f1f5f9; padding: 0 .25rem; border-radius: .25rem; }
+</style>
+</head>
+<body>
+<h1>VitaCheck — Gemini Nano spike test</h1>
+<p>Open this file in Chrome on your laptop. It checks whether on-device Gemini Nano is available in this browser, and if it is, runs one real classification: a sample blood pressure reading, exactly like VitaCheck will do on-device.</p>
+<div id="status" class="status warn">Checking…</div>
+<pre id="log">Starting check…</pre>
+<p><button id="tryBtn" disabled>Run sample classification (on-device)</button></p>
+<pre id="result"></pre>
+<script>
+const logEl = document.getElementById('log');
+const statusEl = document.getElementById('status');
+const tryBtn = document.getElementById('tryBtn');
+const resultEl = document.getElementById('result');
+function log(msg) { logEl.textContent += '\n' + msg; }
+function setStatus(text, cls) { statusEl.textContent = text; statusEl.className = 'status ' + cls; }
+log('Chrome: ' + navigator.userAgent);
+let session = null;
+async function check() {
+  // New Prompt API (Chrome 138+): window.LanguageModel
+  if ('LanguageModel' in self) {
+    log('Found window.LanguageModel (Prompt API).');
+    try {
+      const availability = await LanguageModel.availability();
+      log('LanguageModel.availability() = ' + availability);
+      if (availability === 'unavailable') {
+        setStatus('Nano is UNAVAILABLE in this Chrome.', 'bad');
+        log('Hints: use Chrome 138+ on desktop, check chrome://flags for "Prompt API for Gemini Nano" and "Optimization Guide On Device Model", and make sure there is free disk space (the model download is large).');
+        return;
+      }
+      if (availability === 'downloadable' || availability === 'downloading') {
+        setStatus('Nano is DOWNLOADABLE — first use will download the model.', 'warn');
+      } else {
+        setStatus('Nano is AVAILABLE on-device.', 'ok');
+      }
+      tryBtn.disabled = false;
+      tryBtn.onclick = runSample;
+      return;
+    } catch (e) { log('LanguageModel.availability() threw: ' + e.message); }
+  }
+  // Older built-in AI API: window.ai.languageModel
+  if (window.ai && window.ai.languageModel) {
+    log('Found window.ai.languageModel (older built-in AI API).');
+    try {
+      const caps = await window.ai.languageModel.capabilities();
+      log('capabilities().available = ' + caps.available);
+      if (caps.available === 'no') {
+        setStatus('Nano is UNAVAILABLE in this Chrome.', 'bad');
+        return;
+      }
+      setStatus(caps.available === 'readily' ? 'Nano is AVAILABLE on-device.' : 'Nano is DOWNLOADABLE — first use will download the model.', caps.available === 'readily' ? 'ok' : 'warn');
+      tryBtn.disabled = false;
+      tryBtn.onclick = runSample;
+      return;
+    } catch (e) { log('capabilities() threw: ' + e.message); }
+  }
+  setStatus('No on-device model API found in this browser.', 'bad');
+  log('Hints: this test needs desktop Chrome 138+ with Gemini Nano. Check chrome://version, then chrome://flags for the Prompt API / on-device model flags.');
+}
+async function runSample() {
+  tryBtn.disabled = true;
+  resultEl.textContent = 'Creating on-device session (first run may download the model — this can take a while)…';
+  const prompt = 'Classify this blood pressure reading in one short plain sentence for a non-medical person, and say whether it is normal, elevated, or high. Reading: systolic 145, diastolic 92, pulse 78. Do not diagnose or prescribe. Start with the classification.';
+  if ('LanguageModel' in self) {
+    session = await LanguageModel.create({
+      monitor(m) { m.addEventListener('downloadprogress', e => { resultEl.textContent = 'Downloading on-device model: ' + Math.round(e.loaded * 100) + '%'; }); }
+    });
+    const out = await session.prompt(prompt);
+    resultEl.textContent = 'ON-DEVICE ANSWER:\n' + out;
+  } else {
+    session = await window.ai.languageModel.create();
+    const out = await session.prompt(prompt);
+    resultEl.textContent = 'ON-DEVICE ANSWER:\n' + out;
+  }
+  setStatus('Nano WORKS on-device in this Chrome.', 'ok');
+  log('Sample classification succeeded on-device.');
+} catch (e) {
+  resultEl.textContent = 'Sample run failed: ' + e.message;
+  log('Sample run threw: ' + e.message);
+  tryBtn.disabled = false;
+}
+check();
+</script>
+</body>
+</html>
